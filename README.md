@@ -2,12 +2,16 @@
 
 司法院裁判書開放 API 的個人搜尋與同步工具。
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FIdealitrepublic%2Fjudicial-case-search)
+
 ## 功能
 
 - 使用司法院資料開放平台帳號取得 6 小時有效 Token
 - 每日自動抓取司法院提供的「7 日前裁判書異動清單」
 - 取得刑事、民事、行政、懲戒、憲法裁判全文並以 JID 去重
 - SQLite FTS5 全文搜尋，可搜尋任意關鍵字
+- 搜尋結果直接顯示從判決文字「被告」欄位保守抽取的姓名
+- 可展開原始裁判內容驗證姓名
 - 簡易 Web UI 與 JSON API
 - 若司法院撤下既有裁判，依官方規則從本地資料庫移除
 - 密碼只透過環境變數提供，絕不寫入 repository
@@ -62,9 +66,18 @@ GET /api/search?q=竹聯幫&limit=20
 
 目前 workflow 將資料庫作為 artifact 保存，避免把裁判資料或帳密提交到 Git。
 
+## Vercel 部署
+
+Vercel 可直接從 GitHub 匯入本 repository。部署後在 Vercel Project Settings → Environment Variables 設定：
+
+- `JUDICIAL_USER`
+- `JUDICIAL_PASSWORD`
+
+兩者均使用 encrypted/secret environment variable，不要提交到 repository。
+
 ## 資料判讀
 
-本工具是全文檢索工具，不會因為某人的姓名出現在判決中，就自動判定其為犯罪組織成員。若後續加入人物/組織 Entity Extraction，應區分「法院明確認定」、「判決描述涉及」、「僅文字出現」等證據層級。
+本工具是全文檢索工具，不會因為某人的姓名出現在判決中，就自動判定其為犯罪組織成員。被告姓名僅依公開裁判文字中的「被告」欄位做保守抽取，使用者應回到裁判原文核驗。若後續加入人物/組織 Entity Extraction，應區分「法院明確認定」、「判決描述涉及」、「僅文字出現」等證據層級。
 
 ## License
 
