@@ -45,10 +45,15 @@ def _result_links(page: str):
 
 
 def _lawplayer_links(page: str):
+    """Extract only individual LawPlayer judgment pages, not its search page."""
     links = []
-    for raw in re.findall(r"href=[\"']([^\"']*?/judgment/[^\"']+)[\"']", page, re.I):
+    for raw in re.findall(r"href=[\"']([^\"']+)[\"']", page, re.I):
         href = html.unescape(raw)
         url = urljoin("https://lawplayer.com", href)
+        if not re.match(r"^https://lawplayer\.com/judgment/[^/?#]+", url, re.I):
+            continue
+        if "/search/judgment/" in url.lower():
+            continue
         if url not in links:
             links.append(url)
     return links
@@ -127,9 +132,6 @@ def search_official(keyword: str, limit: int = 20):
     }
 
     with httpx.Client(timeout=30, follow_redirects=True, headers=headers) as client:
-        # Prefer the official source. If the official result page is reachable
-        # but its dynamic result links cannot be parsed from a server request,
-        # fall back to LawPlayer's public index of the same Judicial Yuan data.
         try:
             results = _search_official(client, keyword, limit)
             if results:
