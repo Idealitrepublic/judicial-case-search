@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: judicial-case-search
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: JUDICIAL_USER
+        sync: false
+      - key: JUDICIAL_PASSWORD
+        sync: false
