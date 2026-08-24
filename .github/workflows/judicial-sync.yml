@@ -1,0 +1,34 @@
+name: Judicial API Sync
+
+on:
+  schedule:
+    # 17:30 UTC = 01:30 Taiwan time, inside the Judicial API's 00:00-06:00 service window.
+    - cron: '30 17 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JUDICIAL_DB: judgments.db
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Sync judgments
+        env:
+          JUDICIAL_USER: ${{ secrets.JUDICIAL_USER }}
+          JUDICIAL_PASSWORD: ${{ secrets.JUDICIAL_PASSWORD }}
+        run: python -m app.sync
+      - name: Upload database artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: judicial-database
+          path: judgments.db
+          retention-days: 30
