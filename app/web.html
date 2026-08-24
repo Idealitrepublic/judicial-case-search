@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Judicial Case Search</title>
+<style>
+body{font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;max-width:1100px;margin:40px auto;padding:0 20px;background:#f7f7f8;color:#222}h1{margin-bottom:8px}.search{display:flex;gap:10px}.search input{flex:1;padding:14px;font-size:18px;border:1px solid #ccc;border-radius:8px}.search button{padding:0 22px;border:0;border-radius:8px;background:#222;color:white;font-size:16px}.meta{margin:20px 0;color:#666}.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:20px;margin:14px 0}.defendants{display:flex;gap:8px;flex-wrap:wrap}.person{background:#fff0f0;border:1px solid #e7b5b5;padding:6px 10px;border-radius:999px}.context{color:#666;font-size:14px;margin-top:8px}.fulltext{white-space:pre-wrap;background:#fafafa;padding:12px;border-radius:6px;max-height:260px;overflow:auto}.badge{font-size:12px;background:#eee;padding:4px 7px;border-radius:5px}
+</style>
+</head>
+<body>
+<h1>Judicial Case Search</h1>
+<p>司法院裁判書全文搜尋｜搜尋後自動整理「被告」欄位</p>
+<form class="search" id="form"><input id="q" placeholder="例如：竹聯幫" autofocus><button>搜尋</button></form>
+<div class="meta" id="meta"></div><main id="results"></main>
+<script>
+const form=document.querySelector('#form'),q=document.querySelector('#q'),meta=document.querySelector('#meta'),results=document.querySelector('#results');
+form.addEventListener('submit',async e=>{e.preventDefault();const keyword=q.value.trim();if(!keyword)return;meta.textContent='搜尋中…';results.innerHTML='';try{const r=await fetch('/api/search?q='+encodeURIComponent(keyword));if(!r.ok)throw new Error(await r.text());const data=await r.json();meta.textContent=`找到 ${data.total} 筆裁判書；以下同步顯示自動抽取的被告姓名。`;data.results.forEach(x=>{const people=(x.defendants||[]).map(p=>`<span class="person">${escapeHtml(p.name)}</span>`).join('');results.insertAdjacentHTML('beforeend',`<article class="card"><div><span class="badge">${escapeHtml(x.court||'法院未知')}</span> ${escapeHtml(x.case_no||'')}</div><h2>${escapeHtml(x.title||x.case_no||'裁判')}</h2><h3>被告人</h3><div class="defendants">${people||'<span>未能從公開文字安全辨識</span>'}</div><details><summary>查看命中原文</summary><div class="fulltext">${escapeHtml(x.text||'')}</div></details></article>`)});}catch(err){meta.textContent='搜尋失敗：'+err.message;}});
+function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+</script>
+</body></html>
