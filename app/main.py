@@ -10,8 +10,6 @@ from app.live_search import search_official
 
 app = FastAPI(title="Judicial Case Search", version="0.3.1")
 
-# SQLite is only a local/cache layer. A serverless request must still work when
-# the ephemeral database has not been created yet.
 try:
     init_db()
 except Exception:
@@ -28,19 +26,28 @@ def enrich(row):
 
 
 def search_all(q: str, limit: int):
-    """Search cached API data, then always fall back to the official UI."""
+    """Search the live public judgment indexes first; cache is only a fallback."""
+    try:
+        live = search_official(q, limit)
+        if live:
+            for item in live:
+                item["defendants"] = extract_defendants(item.get("content", ""))
+            return live, "official-search"
+    except Exception as live_error:
+        last_error = live_error
+    else:
+        last_error = None
+
     try:
         local = [enrich(r) for r in search_judgments(q, limit)]
         if local:
             return local, "api-index"
     except Exception:
-        # Fresh Vercel instances may not have a writable/persistent SQLite file.
         pass
 
-    live = search_official(q, limit)
-    for item in live:
-        item["defendants"] = extract_defendants(item.get("content", ""))
-    return live, "official-search"
+    if last_error:
+        raise last_error
+    return [], ""
 
 
 @app.get("/api/search")
@@ -90,7 +97,7 @@ def home(q: str = ""):
 
     source_text = {
         "api-index": "資料來源：本機司法院 API 同步索引",
-        "official-search": "資料來源：司法院官方裁判書查詢系統（歷史關鍵字搜尋）",
+        "official-search": "資料來源：司法院裁判書公開查詢／公開裁判索引",
     }.get(source, "")
 
     return f"""<!doctype html>
