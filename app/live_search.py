@@ -1,4 +1,4 @@
-"""Live full-text search against the Judicial Yuan public judgment UI."""
+"""Live full-text search against public Taiwanese judgment indexes."""
 import html
 import re
 from urllib.parse import urljoin
@@ -7,6 +7,7 @@ import httpx
 
 SEARCH_URL = "https://judgment.judicial.gov.tw/FJUD/qryresult.aspx"
 DATA_BASE = "https://judgment.judicial.gov.tw/FJUD/"
+LAWPLAYER_SEARCH = "https://lawplayer.com/search/judgment/"
 
 
 def _clean_text(value: str) -> str:
@@ -22,32 +23,38 @@ def _clean_text(value: str) -> str:
 
 
 def _result_links(page: str):
-    """Extract judgment links from href attributes and raw HTML/JS."""
     links = []
     patterns = [
         r"(?:https?://judgment\.judicial\.gov\.tw)?(?:/)?FJUD/(?:data|printData)\.aspx\?[^\"'<>\s]+",
         r"(?:https?://judgment\.judicial\.gov\.tw)?(?:/)?LAW_Mobile_FJUD/FJUD/(?:data|printData)\.aspx\?[^\"'<>\s]+",
         r"href=[\"']([^\"']*(?:data|printData)\.aspx\?[^\"']+)[\"']",
     ]
-    candidates = []
     for pattern in patterns:
-        candidates.extend(re.findall(pattern, page, re.I))
+        for raw in re.findall(pattern, page, re.I):
+            href = html.unescape(raw).replace("&amp;", "&")
+            if href.startswith("href="):
+                href = href.split("=", 1)[1].strip("\"'")
+            if not re.search(r"(?:^|/)(?:data|printData)\.aspx\?", href, re.I):
+                continue
+            if not re.search(r"(?:^|[?&])id=", href, re.I):
+                continue
+            url = urljoin(DATA_BASE, href)
+            if url not in links:
+                links.append(url)
+    return links
 
-    for raw in candidates:
-        href = html.unescape(raw).replace("&amp;", "&")
-        if href.startswith("href="):
-            href = href.split("=", 1)[1].strip("\"'")
-        if not re.search(r"(?:^|/)(?:data|printData)\.aspx\?", href, re.I):
-            continue
-        if not re.search(r"(?:^|[?&])id=", href, re.I):
-            continue
-        url = urljoin(DATA_BASE, href)
+
+def _lawplayer_links(page: str):
+    links = []
+    for raw in re.findall(r"href=[\"']([^\"']*?/judgment/[^\"']+)[\"']", page, re.I):
+        href = html.unescape(raw)
+        url = urljoin("https://lawplayer.com", href)
         if url not in links:
             links.append(url)
     return links
 
 
-def _fetch_judgment(client: httpx.Client, url: str):
+def _fetch_judgment(client: httpx.Client, url: str, source: str = "official"):
     response = client.get(url)
     response.raise_for_status()
     raw = response.text
@@ -59,8 +66,52 @@ def _fetch_judgment(client: httpx.Client, url: str):
     return {
         "jid": jid, "title": title, "date": "", "case_no": "",
         "case_type": "", "year": "", "content": text,
-        "snippet": text[:900], "source_url": url,
+        "snippet": text[:900], "source_url": url, "source": source,
     }
+
+
+def _search_official(client, keyword: str, limit: int):
+    response = client.get(
+        SEARCH_URL,
+        params={"judtype": "JUDBOOK", "kw": keyword, "sys": "A", "jud_court": ""},
+    )
+    response.raise_for_status()
+    page = response.text
+    text = _clean_text(page)
+    if "查詢設定錯誤" in text:
+        raise RuntimeError("司法院拒絕了這組查詢條件，請縮小關鍵字後重試。")
+    if "系統忙碌中" in text:
+        raise RuntimeError("司法院裁判書系統目前忙碌，請稍後重試。")
+
+    links = _result_links(page)
+    results = []
+    for url in links:
+        if len(results) >= limit:
+            break
+        try:
+            item = _fetch_judgment(client, url, "official")
+            if keyword in item["content"] or keyword.lower() in item["content"].lower():
+                results.append(item)
+        except Exception:
+            continue
+    return results
+
+
+def _search_lawplayer(client, keyword: str, limit: int):
+    response = client.get(LAWPLAYER_SEARCH + keyword)
+    response.raise_for_status()
+    links = _lawplayer_links(response.text)
+    results = []
+    for url in links:
+        if len(results) >= limit:
+            break
+        try:
+            item = _fetch_judgment(client, url, "lawplayer")
+            if keyword in item["content"] or keyword.lower() in item["content"].lower():
+                results.append(item)
+        except Exception:
+            continue
+    return results
 
 
 def search_official(keyword: str, limit: int = 20):
@@ -76,32 +127,18 @@ def search_official(keyword: str, limit: int = 20):
     }
 
     with httpx.Client(timeout=30, follow_redirects=True, headers=headers) as client:
-        response = client.get(
-            SEARCH_URL,
-            params={"judtype": "JUDBOOK", "kw": keyword, "sys": "A", "jud_court": ""},
-        )
-        response.raise_for_status()
-        page = response.text
-        text = _clean_text(page)
+        # Prefer the official source. If the official result page is reachable
+        # but its dynamic result links cannot be parsed from a server request,
+        # fall back to LawPlayer's public index of the same Judicial Yuan data.
+        try:
+            results = _search_official(client, keyword, limit)
+            if results:
+                return results
+        except Exception:
+            pass
 
-        if "查詢設定錯誤" in text:
-            raise RuntimeError("司法院拒絕了這組查詢條件，請縮小關鍵字後重試。")
-        if "系統忙碌中" in text:
-            raise RuntimeError("司法院裁判書系統目前忙碌，請稍後重試。")
+        fallback = _search_lawplayer(client, keyword, limit)
+        if fallback:
+            return fallback
 
-        links = _result_links(page)
-        if not links:
-            raise RuntimeError("已連線到司法院，但沒有解析到裁判書結果連結。")
-
-        results = []
-        for url in links:
-            if len(results) >= limit:
-                break
-            try:
-                item = _fetch_judgment(client, url)
-                content = item["content"]
-                if keyword in content or keyword.lower() in content.lower():
-                    results.append(item)
-            except Exception:
-                continue
-        return results
+        raise RuntimeError("找不到裁判結果：司法院官方搜尋與公開裁判索引目前都沒有可用結果。")
