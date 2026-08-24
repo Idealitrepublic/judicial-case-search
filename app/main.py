@@ -8,8 +8,14 @@ from app.db import get_judgment, init_db, search_judgments
 from app.extract import extract_defendants
 from app.live_search import search_official
 
-app = FastAPI(title="Judicial Case Search", version="0.3.0")
-init_db()
+app = FastAPI(title="Judicial Case Search", version="0.3.1")
+
+# SQLite is only a local/cache layer. A serverless request must still work when
+# the ephemeral database has not been created yet.
+try:
+    init_db()
+except Exception:
+    pass
 
 
 def enrich(row):
@@ -22,16 +28,14 @@ def enrich(row):
 
 
 def search_all(q: str, limit: int):
-    """Search local API-synced data first, then official historical search UI.
-
-    JList/JDoc are excellent for synchronization, but the official Open API has
-    no full-text keyword endpoint. The public Judicial Yuan search UI is used
-    only as a fallback so a query such as 竹聯幫 can find historical judgments
-    outside the rolling JList window.
-    """
-    local = [enrich(r) for r in search_judgments(q, limit)]
-    if local:
-        return local, "api-index"
+    """Search cached API data, then always fall back to the official UI."""
+    try:
+        local = [enrich(r) for r in search_judgments(q, limit)]
+        if local:
+            return local, "api-index"
+    except Exception:
+        # Fresh Vercel instances may not have a writable/persistent SQLite file.
+        pass
 
     live = search_official(q, limit)
     for item in live:
@@ -112,7 +116,7 @@ form{{display:flex;gap:8px;margin-bottom:24px}} input{{flex:1;padding:13px;borde
 def judgment_page(jid: str):
     item = get_judgment(jid)
     if not item:
-        raise HTTPException(status_code=404, detail="找不到裁判書")
+        raise HTTPException(status_code=404, detail="找不到本地裁判書")
     defendants = extract_defendants(item.get("content", ""))
     people = "".join(f"<li>{escape(p['name'])}</li>" for p in defendants) or "<li>未能安全辨識</li>"
     content = escape(item.get("content") or "").replace("\n", "<br>")
